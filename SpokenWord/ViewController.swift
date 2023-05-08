@@ -26,50 +26,32 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
     
     @IBOutlet var recordButton: UIButton!
 
-    class Dest {
-        var ip = ""
-        var host = ""
-        var port: UInt16 = 0
-        var fd: Int32 = 0
-        var sock: sockaddr_in
+    class ServiceHost {
+        var view: ViewController
+        var host: String
+        var port: UInt16
         var sd: DNSServiceRef?
-        var valid = false
         var error: DNSServiceErrorType = 0
         var queryTimer: Timer?
-        var pingTimer: Timer?
 
-        init(_ inhost: String, _ inport: UInt16) {
+        init(_ inview: ViewController, _ inhost: String, _ inport: UInt16) {
+            view = inview
             host = inhost
             port = inport
-
-            sock = sockaddr_in()
-
-            fd = socket(AF_INET, SOCK_DGRAM, 0) // DGRAM makes it UDP
-
-            pingTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-//                self.udpSend("ping")
-            }
-
             resolve()
         }
 
         deinit {
-            if (pingTimer != nil) {
-                pingTimer!.invalidate()
-            }
             if (queryTimer != nil) {
                 queryTimer!.invalidate()
             }
             if (sd != nil) {
                 DNSServiceRefDeallocate(sd)
             }
-            if (fd != 0) {
-                close(fd)
-            }
         }
 
         let queryReply: DNSServiceQueryRecordReply = { _, _, _, error, _, _, _, rdlen, rdata, _, context in
-            let this: Dest = Unmanaged.fromOpaque(context!).takeUnretainedValue()
+            let this: ServiceHost = Unmanaged.fromOpaque(context!).takeUnretainedValue()
             guard error == kDNSServiceErr_NoError else {
                 this.error = error
                 return
@@ -85,9 +67,13 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
             let d = offsetPointer.load(as: UInt8.self)
             let addr = "\(a).\(b).\(c).\(d)"
 
-            print("query2: \(addr)")
-            this.ip = addr
-            this.valid = true
+            print("resolved \(this.host) -> \(addr)")
+
+            var dt = this.view.dests.first(where: { return ($0.ip == addr && $0.port == this.port && $0.host == this.host) })
+            if (dt == nil) {
+                dt = Dest(addr, this.port, this.host)
+                this.view.dests.append(dt!)
+            }
         }
 
         func resolve() {
@@ -107,13 +93,49 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
             }
         }
     }
+    
+    class Dest {
+        var ip = ""
+        var port: UInt16 = 0
+        var host = ""
+        var sock: sockaddr_in
+        var fd: Int32 = 0
+        var createTime: Double = 0
 
+        init(_ inip: String, _ inport: UInt16, _ inhost: String) {
+            ip = inip
+            host = inhost
+            port = inport
+            sock = sockaddr_in()
+            createTime = Date().timeIntervalSince1970
+
+            var ep = port
+            if (NSHostByteOrder() == NS_LittleEndian) {
+                ep = NSSwapShort(ep)
+            }
+            sock.sin_len = UInt8(MemoryLayout.size(ofValue: sock))
+            sock.sin_family = sa_family_t(AF_INET)
+            sock.sin_addr.s_addr = inet_addr(ip)
+            sock.sin_port = ep
+
+            fd = socket(AF_INET, SOCK_DGRAM, 0)  // DGRAM makes it UDP
+        }
+
+        deinit {
+            if (fd != 0) {
+                close(fd)
+            }
+        }
+    }
+
+    var hosts: [ServiceHost] = []
     var dests: [Dest] = []
-    var destIP = ""
-    var destPort: UInt16 = 0
-    var dest = sockaddr_in()
-    var fd: Int32 = 0
-    var destResolvedCount = 0
+    var currentDest: Dest?
+//    var destIP = ""
+//    var destPort: UInt16 = 0
+//    var dest = sockaddr_in()
+//    var fd: Int32 = 0
+//    var destResolvedCount = 0
 
     // MARK: View Controller Lifecycle
     
@@ -336,65 +358,23 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
         return String(data: j, encoding: .utf8)!
     }
 
-    var resolvedHost = ""
-    var resolvedPort: UInt16 = 0
-    var resolvedIP = ""
     var resolvedError: Int = 0
-    var resolvedCount = 0
-    var resolvedValid = false
-
-    private let _queryReply: DNSServiceQueryRecordReply = { _, _, _, error, _, _, _, rdlen, rdata, _, context in
-        let this: ViewController = Unmanaged.fromOpaque(context!).takeUnretainedValue()
-        guard error == kDNSServiceErr_NoError else {
-            this.resolvedError = Int(error)
-            return
-        }
-        guard var offsetPointer = rdata else { return }
-
-        let a = offsetPointer.load(as: UInt8.self)
-        offsetPointer += 1
-        let b = offsetPointer.load(as: UInt8.self)
-        offsetPointer += 1
-        let c = offsetPointer.load(as: UInt8.self)
-        offsetPointer += 1
-        let d = offsetPointer.load(as: UInt8.self)
-        let addr = "\(a).\(b).\(c).\(d)"
-
-        print("dns-sd: \(addr)")
-
-        if (a == 169 && b == 254) {
-            print("dns-sd: \(addr)")
-            this.resolvedIP = addr
-            this.resolvedCount += 1
-            this.resolvedValid = true
-        }
-    }
 
     private let _resolveReply: DNSServiceResolveReply = { _, _, _, error, _, host, port, _, _, context in
         let this: ViewController = Unmanaged.fromOpaque(context!).takeUnretainedValue()
         guard error == kDNSServiceErr_NoError else {
             this.resolvedError = Int(error)
+            print("_resolveReply error: \(error)")
             return
         }
         
         let host = String(cString: host!)
         let port = UInt16(bigEndian: port)
-        var dt = this.dests.first(where: { return ($0.host == host && $0.port == port) })
-        if (dt == nil) {
-            dt = Dest(host, port)
-            this.dests.append(dt!)
+        var h = this.hosts.first(where: { return ($0.host == host && $0.port == port) })
+        if (h == nil) {
+            h = ServiceHost(this, host, port)
+            this.hosts.append(h!)
         }
-        
-        this.resolvedHost = host
-        this.resolvedPort = port
-
-        print("dns-sd: \(this.resolvedPort), \(this.resolvedHost)")
-
-        var sd: DNSServiceRef?
-        DNSServiceQueryRecord(&sd, 0, 0, this.resolvedHost, UInt16(kDNSServiceType_A), UInt16(kDNSServiceClass_IN), this._queryReply, Unmanaged.passUnretained(this).toOpaque())
-        DNSServiceProcessResult(sd)
-        DNSServiceRefDeallocate(sd)
-        sd = nil
     }
 
     var resolveSR: DNSServiceRef?
@@ -419,51 +399,50 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
         }
 
 
-        fd = socket(AF_INET, SOCK_DGRAM, 0) // DGRAM makes it UDP
+//        fd = socket(AF_INET, SOCK_DGRAM, 0) // DGRAM makes it UDP
 
         Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
             self.udpSend("ping")
         }
     }
 
-    // swift
     deinit {
-        if (fd != 0) {
-            close(fd)
-        }
         if (resolveSR != nil) {
             DNSServiceRefDeallocate(resolveSR)
         }
     }
 
     func udpSend(_ textToSend: String) {
-        if (resolvedCount != destResolvedCount) {
-            destPort = resolvedPort
-            destIP = resolvedIP
-            destResolvedCount = resolvedCount
-
-            print("sending to \(destIP):\(destPort)")
-
-            var port = destPort
-            if (NSHostByteOrder() == NS_LittleEndian) {
-                port = NSSwapShort(port)
-            }
-            dest.sin_len = UInt8(MemoryLayout.size(ofValue: dest))
-            dest.sin_family = sa_family_t(AF_INET)
-            dest.sin_addr.s_addr = inet_addr(destIP)
-            dest.sin_port = port
-        }
-
-        if (!resolvedValid) {
+        if (dests.count == 0) {
+            print("no dests")
             return
         }
+        
+        var bestDest = dests[0]
+        for dst in dests {
+            let timediff = dst.createTime - bestDest.createTime
+            // consider them registered at the same time if within a small delta
+            if (abs(timediff) < 2) {
+                // prefer link local
+                if (dst.ip.starts(with: "169.254")) {
+                    bestDest = dst
+                }
+                // if this one's newer then take it
+            } else if (timediff > 0) {
+                bestDest = dst
+            }
+        }
 
+        if (bestDest !== currentDest) {
+            currentDest = bestDest
+            print("sending to \(currentDest!.ip):\(currentDest!.port)")
+        }
+        
         textToSend.withCString { cstr -> () in
-            var dst = dest
-
+            var dst = currentDest!.sock
             withUnsafePointer(to: &dst) { pointer -> () in
                 let memory = UnsafeRawPointer(pointer).bindMemory(to: sockaddr.self, capacity: 1)
-                sendto(fd, cstr, strlen(cstr), 0, memory, socklen_t(dest.sin_len))
+                sendto(currentDest!.fd, cstr, strlen(cstr), 0, memory, socklen_t(currentDest!.sock.sin_len))
             }
         }
     }
