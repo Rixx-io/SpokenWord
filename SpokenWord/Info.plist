@@ -23,9 +23,11 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Your microphone will be used to record your speech when you press the "Start Recording" button.</string>
+	<string>Your microphone will be used to record your speech when you press the &quot;Start Recording&quot; button.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Speech recognition will be used to determine which words you speak into the device's microphone.</string>
+	<string>Speech recognition will be used to determine which words you speak into the device&apos;s microphone.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Uses the local network to talk to nearby services.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
@@ -53,6 +55,10 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_x-plane9._udp</string>
 	</array>
 </dict>
 </plist>
