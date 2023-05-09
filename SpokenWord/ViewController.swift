@@ -26,16 +26,18 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
     
     @IBOutlet var recordButton: UIButton!
 
+    @IBOutlet var connectionIndicator: UILabel!
+
     class ServiceHost {
-        var view: ViewController
+        var finder: ServiceFinder
         var host: String
         var port: UInt16
         var sd: DNSServiceRef?
         var error: DNSServiceErrorType = 0
         var queryTimer: Timer?
 
-        init(_ inview: ViewController, _ inhost: String, _ inport: UInt16) {
-            view = inview
+        init(_ infinder: ServiceFinder, _ inhost: String, _ inport: UInt16) {
+            finder = infinder
             host = inhost
             port = inport
             resolve()
@@ -69,10 +71,10 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
 
             print("resolved \(this.host) -> \(addr)")
 
-            var dt = this.view.dests.first(where: { return ($0.ip == addr && $0.port == this.port && $0.host == this.host) })
+            var dt = this.finder.dests.first(where: { return ($0.ip == addr && $0.port == this.port && $0.host == this.host) })
             if (dt == nil) {
                 dt = Dest(addr, this.port, this.host)
-                this.view.dests.append(dt!)
+                this.finder.dests.append(dt!)
             }
         }
 
@@ -128,14 +130,125 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
         }
     }
 
-    var hosts: [ServiceHost] = []
-    var dests: [Dest] = []
+    // https://opensource.apple.com/source/mDNSResponder/mDNSResponder-544/mDNSShared/dns_sd.h.auto.html
+
+    class ServiceFinder {
+        var services: [String] = []
+        var hosts: [ServiceHost] = []
+        var dests: [Dest] = []
+        var browseSR: DNSServiceRef?
+        var browseError: DNSServiceErrorType = 0
+        var resolveSR: DNSServiceRef?
+        var resolveError: DNSServiceErrorType = 0
+        var lookingFor: String
+        
+        init(_ inlookingFor: String) {
+            print("ServiceFinder")
+            lookingFor = inlookingFor
+            var error = DNSServiceBrowse(&browseSR, 0, 0, "_x-plane9._udp", "local", browseReply, Unmanaged.passUnretained(self).toOpaque())
+            if (error != 0) {
+                print("error browsing (1): \(error)")
+            }
+
+            error = DNSServiceResolve(&resolveSR, 0, 0, lookingFor, "_x-plane9._udp", "local", resolveReply, Unmanaged.passUnretained(self).toOpaque())
+            if error != 0 {
+                print("error browsing (2): \(error)")
+            }
+
+            Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
+                self.checkForResult(self.browseSR)
+                self.checkForResult(self.resolveSR)
+            }
+            
+        }
+
+        func checkForResult(_ insd:DNSServiceRef?) {
+            guard let sd = insd else { return }
+            let sfd = DNSServiceRefSockFD(sd)
+            guard sfd >= 0 else { return }
+            let ev = Int16(POLLIN)
+            var pollFD = pollfd(fd: sfd, events: ev, revents: 0)
+            guard poll(&pollFD, 1, 0) > 0 else { return }
+            let error = DNSServiceProcessResult(sd)
+            if (error != 0) {
+                print("DNSServiceProcessResult(checkForResult) error: \(error)")
+            }
+        }
+
+        let browseReply: DNSServiceBrowseReply = { _, flags, _, error, serviceName, _, _, context in
+            let this: ServiceFinder = Unmanaged.fromOpaque(context!).takeUnretainedValue()
+            guard error == kDNSServiceErr_NoError else {
+                this.browseError = error
+                print("browseReply error: \(error)")
+                return
+            }
+            
+            let serviceName = String(cString: serviceName!)
+//            print("browseReply: \(serviceName) \(flags)")
+            if (serviceName == this.lookingFor) {
+                var add = (flags == 3 || flags == 2)  // kDNSServiceFlagsAdd + kDNSServiceFlagsMoreComing
+                if (add) {
+                    if (!this.services.contains(serviceName)) {
+                        this.services.append(serviceName)
+                        
+                    }
+                } else {
+                    if let i = this.services.firstIndex(of: serviceName) {
+                        this.services.remove(at: 0)
+                    }
+                }
+            }
+        }
+
+        let resolveReply: DNSServiceResolveReply = { _, _, _, error, _, host, port, _, _, context in
+            let this: ServiceFinder = Unmanaged.fromOpaque(context!).takeUnretainedValue()
+            guard error == kDNSServiceErr_NoError else {
+                this.resolveError = error
+                print("resolveReply error: \(error)")
+                return
+            }
+            
+            let host = String(cString: host!)
+            let port = UInt16(bigEndian: port)
+            var h = this.hosts.first(where: { return ($0.host == host && $0.port == port) })
+            if (h == nil) {
+                h = ServiceHost(this, host, port)
+                this.hosts.append(h!)
+            }
+        }
+
+        func bestDest() -> Dest? {
+            if (services.contains(lookingFor) && dests.count > 0) {
+                var best = dests[0]
+                for dst in dests {
+                    let timediff = dst.createTime - best.createTime
+                    // consider them registered at the same time if within a small delta
+                    if (abs(timediff) < 2) {
+                        // prefer link local
+                        if (dst.ip.starts(with: "169.254")) {
+                            best = dst
+                        }
+                        // if this one's newer then take it
+                    } else if (timediff > 0) {
+                        best = dst
+                    }
+                }
+                return best
+            }
+            return nil
+        }
+
+        deinit {
+            if (browseSR != nil) {
+                DNSServiceRefDeallocate(browseSR)
+            }
+            if (resolveSR != nil) {
+                DNSServiceRefDeallocate(resolveSR)
+            }
+        }
+    }
+
     var currentDest: Dest?
-//    var destIP = ""
-//    var destPort: UInt16 = 0
-//    var dest = sockaddr_in()
-//    var fd: Int32 = 0
-//    var destResolvedCount = 0
 
     // MARK: View Controller Lifecycle
     
@@ -358,86 +471,47 @@ public class ViewController: UIViewController, SFSpeechRecognizerDelegate {
         return String(data: j, encoding: .utf8)!
     }
 
-    var resolvedError: Int = 0
-
-    private let _resolveReply: DNSServiceResolveReply = { _, _, _, error, _, host, port, _, _, context in
-        let this: ViewController = Unmanaged.fromOpaque(context!).takeUnretainedValue()
-        guard error == kDNSServiceErr_NoError else {
-            this.resolvedError = Int(error)
-            print("_resolveReply error: \(error)")
-            return
-        }
-        
-        let host = String(cString: host!)
-        let port = UInt16(bigEndian: port)
-        var h = this.hosts.first(where: { return ($0.host == host && $0.port == port) })
-        if (h == nil) {
-            h = ServiceHost(this, host, port)
-            this.hosts.append(h!)
-        }
-    }
-
-    var resolveSR: DNSServiceRef?
-
+    var finder: ServiceFinder?
+    var connected = false
+    
     func udpSetup() {
-        let error = DNSServiceResolve(&resolveSR, 0, 0, "speech-receiver", "_x-plane9._udp", "local", _resolveReply, Unmanaged.passUnretained(self).toOpaque())
-        if error != 0 {
-            print("error looking for proxy: \(error)")
-        }
+        finder = ServiceFinder("speech-receiver")
 
         Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
-            guard let sd = self.resolveSR else { return }
-            let sfd = DNSServiceRefSockFD(sd)
-            guard sfd >= 0 else { return }
-            let ev = Int16(POLLIN)
-            var pollFD = pollfd(fd: sfd, events: ev, revents: 0)
-            guard poll(&pollFD, 1, 0) > 0 else { return }
-            let error = DNSServiceProcessResult(sd)
-            if (error != 0) {
-                print("DNSServiceProcessResult error: \(error)")
+            let dest = self.finder!.bestDest()
+            if (dest != nil) {
+                if (!self.connected) {
+                    self.connected = true
+                    self.connectionIndicator.text = "🟢"
+                }
+            } else {
+                if (self.connected) {
+                    self.connected = false
+                    self.connectionIndicator.text = "🔴"
+                }
+                
             }
-        }
-
-
-//        fd = socket(AF_INET, SOCK_DGRAM, 0) // DGRAM makes it UDP
-
-        Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { timer in
             self.udpSend("ping")
         }
     }
 
     deinit {
-        if (resolveSR != nil) {
-            DNSServiceRefDeallocate(resolveSR)
-        }
     }
 
     func udpSend(_ textToSend: String) {
-        if (dests.count == 0) {
-            print("no dests")
-            return
-        }
-        
-        var bestDest = dests[0]
-        for dst in dests {
-            let timediff = dst.createTime - bestDest.createTime
-            // consider them registered at the same time if within a small delta
-            if (abs(timediff) < 2) {
-                // prefer link local
-                if (dst.ip.starts(with: "169.254")) {
-                    bestDest = dst
-                }
-                // if this one's newer then take it
-            } else if (timediff > 0) {
-                bestDest = dst
-            }
-        }
-
+        let bestDest = finder!.bestDest()
         if (bestDest !== currentDest) {
             currentDest = bestDest
-            print("sending to \(currentDest!.ip):\(currentDest!.port)")
+            if (currentDest != nil) {
+                print("Connected to \(currentDest!.ip):\(currentDest!.port)")
+            } else {
+                print("No connection!")
+            }
         }
-        
+        if (currentDest == nil) {
+            return
+        }
+
         textToSend.withCString { cstr -> () in
             var dst = currentDest!.sock
             withUnsafePointer(to: &dst) { pointer -> () in
