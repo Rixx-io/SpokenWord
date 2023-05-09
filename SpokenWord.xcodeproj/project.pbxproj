@@ -13,6 +13,7 @@
 		738998BB21515C9900E378D8 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 738998B921515C9900E378D8 /* Main.storyboard */; };
 		738998BD21515C9A00E378D8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 738998BC21515C9A00E378D8 /* Assets.xcassets */; };
 		738998C021515C9A00E378D8 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 738998BE21515C9A00E378D8 /* LaunchScreen.storyboard */; };
+		D82D754E2A0ACF4000BD6485 /* ServiceFinder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D82D754D2A0ACF4000BD6485 /* ServiceFinder.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,7 @@
 		738998C121515C9A00E378D8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1D3C360A1D3B6F000000001 /* LICENSE.txt */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
 		A1D45270A1D47E7000000001 /* SampleCode.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = SampleCode.xcconfig; path = Configuration/SampleCode.xcconfig; sourceTree = "<group>"; };
+		D82D754D2A0ACF4000BD6485 /* ServiceFinder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceFinder.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +65,7 @@
 			children = (
 				738998B521515C9900E378D8 /* AppDelegate.swift */,
 				738998B721515C9900E378D8 /* ViewController.swift */,
+				D82D754D2A0ACF4000BD6485 /* ServiceFinder.swift */,
 				738998B921515C9900E378D8 /* Main.storyboard */,
 				738998BC21515C9A00E378D8 /* Assets.xcassets */,
 				738998BE21515C9A00E378D8 /* LaunchScreen.storyboard */,
@@ -162,6 +165,7 @@
 			files = (
 				738998B821515C9900E378D8 /* ViewController.swift in Sources */,
 				738998B621515C9900E378D8 /* AppDelegate.swift in Sources */,
+				D82D754E2A0ACF4000BD6485 /* ServiceFinder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
